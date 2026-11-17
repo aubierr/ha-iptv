@@ -17,8 +17,9 @@ const context = {
   setTimeout: () => 0,
 };
 vm.createContext(context);
-vm.runInContext(`${source}\nthis.iptv = { IptvCard, IptvMiniCard, IptvCardI18n, iptvErr, iptvLang, iptvLocale, iptvT, iptvFocusOf, iptvRefocus, iptvMask };`, context);
-const { IptvCard, IptvMiniCard, IptvCardI18n, iptvErr, iptvLang, iptvLocale, iptvT, iptvFocusOf, iptvRefocus, iptvMask } = context.iptv;
+vm.runInContext(`${source}\nthis.iptv = { IptvCard, IptvMiniCard, IptvCardI18n, iptvErr, iptvLang, iptvLocale, iptvT, iptvFocusOf, iptvRefocus, iptvMask, iptvIsNight, iptvSceneState, iptvSceneSvg };`, context);
+const { IptvCard, IptvMiniCard, IptvCardI18n, iptvErr, iptvLang, iptvLocale, iptvT, iptvFocusOf, iptvRefocus, iptvMask, iptvIsNight, iptvSceneState, iptvSceneSvg } =
+  context.iptv;
 
 const placeholders = (s) => [...String(s).matchAll(/\{\w+\}/g)].map((m) => m[0]).sort();
 
@@ -555,6 +556,26 @@ test('a phone-narrow header puts the title and its pill on a line of their own, 
   }
 });
 
+test('the status pill is placed by measure: beside the whole title, else under the subtitle, else its dot alone', () => {
+  // No fixed width decides where the pill goes: the title row only wraps when _fitPill measured it (.below)
+  for (const css of [IptvCard.CSS, IptvMiniCard.CSS]) {
+    for (const px of [240, 260]) assert.doesNotMatch(containerBlock(css, px), /\.title-row \{[^}]*flex-wrap|\.head \{ display: contents/);
+    assert.match(css, /\.htext \.titles\.below \.head \{ display: contents; \}/);
+    assert.match(css, /\.htext \.titles\.below > :not\(\.head\) \{ order: 1; max-height: 18px; \}/, 'the line above the pill keeps one line');
+    assert.match(css, /\.htext \.titles\.dot-only \.head > \.chip\.st \.tx \{ display: none; \}/);
+    assert.match(css, /\.title-row\.below > \.name \{ flex-basis: 100%; \}/);
+  }
+  assert.match(IptvMiniCard.CSS, /\.mini \.body\.below \.head > \.chip \{ order: 3; margin-left: 0; \}/);
+  // Its dot alone at 200 px and less on the banner
+  assert.ok(IptvCard.CSS.includes('@container (max-width: 200px) { .htext .head > .chip.st { padding: 4px; } .htext .head > .chip.st .tx { display: none; } }'));
+  // Measured: the whole title's text width, the pills, the room on the row, and the banner's floor
+  const fit = IptvCard.prototype._fitPill.toString();
+  for (const part of ['textWidth(name)', "classList.add('below')", "classList.add('dot-only')", "querySelector('.ground')", 'scrollWidth <= tx.clientWidth'])
+    assert.ok(fit.includes(part), `_fitPill measures ${part}`);
+  const card = Object.create(IptvCard.prototype);
+  card._fitPill(); // without a rendered card: nothing to do, no error
+});
+
 test('a phone-narrow footer and expiry line wrap instead of pushing the buttons out of the card', () => {
   const css = IptvCard.CSS;
   assert.match(rule(css, '.foot'), /flex-wrap: wrap/);
@@ -631,4 +652,59 @@ test('a parent that sizes the card from its content (inline-block, flex row, aut
   // Next to the ha-card of the full card and of the mini card
   assert.equal(source.split('</ha-card>${IPTV_SIZER}`').length - 1, 2);
   assert.match(source, /IPTV_SIZER = '<svg class="sizer" aria-hidden="true" focusable="false"><\/svg>'/);
+});
+
+test('illustrated header: night follows illustration_theme, then sun.sun or the dark mode (even with the sun up)', () => {
+  const sun = (state) => ({ states: { 'sun.sun': { state } }, themes: { darkMode: false } });
+  assert.equal(iptvIsNight(sun('below_horizon'), {}), true);
+  assert.equal(iptvIsNight(sun('above_horizon'), {}), false);
+  assert.equal(iptvIsNight(sun('below_horizon'), { illustration_theme: 'day' }), false);
+  assert.equal(iptvIsNight(sun('above_horizon'), { illustration_theme: 'night' }), true);
+  assert.equal(iptvIsNight({ states: {}, themes: { darkMode: true } }, {}), true);
+  const darkDay = { states: { 'sun.sun': { state: 'above_horizon' } }, themes: { darkMode: true } };
+  assert.equal(iptvIsNight(darkDay, {}), true);
+  assert.equal(iptvIsNight(darkDay, { illustration_theme: 'day' }), false);
+  assert.equal(iptvIsNight({ states: {}, themes: { darkMode: false } }, { illustration_theme: 'auto' }), false);
+});
+
+test('illustrated header: the TV shows the worst state, with ids unique to each card', () => {
+  assert.equal(iptvSceneState('ok'), 'playing');
+  assert.equal(iptvSceneState('warning'), 'playing');
+  assert.equal(iptvSceneState('error'), 'offline');
+  assert.equal(iptvSceneState('idle'), 'idle');
+  assert.match(iptvSceneSvg('playing', 3), /class="scene playing"[\s\S]*id="iptv-scr-3"[\s\S]*url\(#iptv-scr-3\)[\s\S]*LIVE/);
+  assert.match(iptvSceneSvg('offline', 4), /class="iptv-x"/);
+  assert.doesNotMatch(iptvSceneSvg('idle', 5), /LIVE|iptv-x/);
+  assert.match(IptvCard.CSS, /prefers-reduced-motion: reduce\) \{\s*\.iptv-show, \.iptv-led/);
+});
+
+test('illustrated header: the editors expose illustration and illustration_theme', () => {
+  const names = IptvCard.getConfigForm().schema.map((s) => s.name);
+  assert.ok(names.includes('illustration') && names.includes('illustration_theme'));
+  const theme = IptvCard.getConfigForm().schema.find((s) => s.name === 'illustration_theme');
+  assert.equal(theme.selector.select.options.map((o) => o.value).join(), 'auto,day,night');
+  const card = new IptvCard();
+  assert.throws(() => card.setConfig({ illustration_theme: 'dusk' }), /illustration_theme/);
+});
+
+test('illustrated header: the status pill follows the title (dot and label in the state colour), the buttons sit in the top-right corner', () => {
+  const css = IptvMiniCard.CSS;
+  // The buttons: one line of 24 px frosted rounds, 5 px from the banner's top-right corner, out of the text
+  assert.match(rule(css, '.banner > .acts'), /position: absolute;[^}]*top: 5px; right: 5px;[^}]*display: flex; gap: 4px/);
+  const btn = rule(css, '.banner > .acts button');
+  assert.match(btn, /width: 24px; height: 24px;/);
+  assert.match(btn, /color: #33506b; background: rgba\(255,255,255,\.55\);/);
+  assert.match(rule(css, '.night > .acts button'), /color: #fff; background: rgba\(255,255,255,\.12\);/);
+  // The pill: on the title row, 8 px after it, never cut (it goes under the other pills instead), a dot, no icon
+  assert.match(rule(css, '.htext .head'), /display: flex; align-items: center; gap: 8px;/);
+  assert.match(rule(css, '.htext .head > .chip.st'), /flex: none;[^}]*font-size: 11px; font-weight: 500;/);
+  assert.match(rule(css, '.htext .chip.st::before'), /width: 7px; height: 7px; border-radius: 50%; background: var\(--c\)/);
+  assert.match(css, /\.htext \.titles\.below \.head \{ display: contents; \}/);
+  assert.match(css, /@container \(max-width: 200px\) \{[^@]*\.htext \.head > \.chip\.st \.tx \{ display: none; \}/);
+  // Markup: the banner keeps its buttons out of the text, the pill right after the name
+  const card = Object.create(IptvCard.prototype);
+  card._config = { illustration_theme: 'day' };
+  card._uid = 'u';
+  const html = card._banner('ok', '<div class="head"><div class="name">T</div><span class="chip st ok"></span></div>', '<button class="refresh"></button>');
+  assert.match(html, /<div class="htext">.*<\/div><div class="acts"><button class="refresh"><\/button><\/div><div class="ground">/s);
 });
