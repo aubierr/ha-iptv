@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.37.2 - 2026-11-20
+
+### Fixes
+- **Xtream Codes, providers that filter the User-Agent**: when a provider refuses a request (HTTP 403, 461, 512 or an HTML page), the integration now tries other player User-Agents (VLC, Lavf, IPTV Smarters, okhttp, Android, Mozilla) and keeps the first one accepted, instead of showing "server unreachable" while the account is fine.
+
 ## 3.37.1 - 2026-11-19
 
 ### Fixes
